@@ -32,6 +32,10 @@ interface Campaign {
   requireFollow: boolean;
   followPromptMessage: string | null;
   followPromptButtonLabel: string | null;
+  followGateStrict?: boolean;
+  followNotFollowingMessage?: string | null;
+  followUnknownMessage?: string | null;
+  profileButtonLabel?: string | null;
   followUpEnabled: boolean;
   followUpMessage: string | null;
   followUpDelayMinutes: number | null;
@@ -57,6 +61,19 @@ interface Campaign {
 
 type Tab = "insights" | "preview";
 
+interface GateStats {
+  entries: number;
+  uniquePeople: number;
+  openingSent: number;
+  checks: { FOLLOWS: number; NOT_FOLLOWING: number; UNKNOWN: number };
+  peopleConfirmed: number;
+  unknownReasons: { reason: string; count: number }[];
+  delivered: number;
+  deliveryUncertain: number;
+  deliveryFailed: number;
+  uniqueClicks: number;
+}
+
 export default function CampaignDetailPage() {
   const { t } = useI18n();
   const router = useRouter();
@@ -70,6 +87,15 @@ export default function CampaignDetailPage() {
   const [tab, setTab] = useState<Tab>("insights");
   const [previewTab, setPreviewTab] = useState<PreviewTab>("dm");
   const [busy, setBusy] = useState(false);
+  const [gateStats, setGateStats] = useState<GateStats | null>(null);
+
+  useEffect(() => {
+    if (!campaign?.requireFollow) return;
+    fetch(`/api/automations/gate-stats?id=${campaign.id}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setGateStats(d.success ? d.data : null))
+      .catch(() => setGateStats(null));
+  }, [campaign?.id, campaign?.requireFollow]);
 
   useEffect(() => {
     fetch("/api/automations", { cache: "no-store" })
@@ -116,11 +142,16 @@ export default function CampaignDetailPage() {
     if (!campaign) return;
     setBusy(true);
     try {
-      await fetch(`/api/automations?id=${campaign.id}`, {
+      const res = await fetch(`/api/automations?id=${campaign.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isActive: !campaign.isActive }),
       });
+      const data = await res.json().catch(() => null);
+      if (!data?.success) {
+        window.alert(data?.error ?? t("Failed to save campaign"));
+        return;
+      }
       setCampaign({ ...campaign, isActive: !campaign.isActive });
     } finally {
       setBusy(false);
@@ -238,7 +269,13 @@ export default function CampaignDetailPage() {
         )}
 
         {campaign.requireFollow && (
-          <Summary title={t("They must follow first")}>
+          <Summary
+            title={
+              campaign.followGateStrict
+                ? t("They must follow first (confirmed follow required)")
+                : t("They must follow first")
+            }
+          >
             <FieldBox>
               {campaign.followPromptMessage ||
                 "quick favor before i send your link. i don't make any money from this, it's free. if you want to support me, just don't unfollow after, and star the repo on github if it helps you. tap the button once you're following and i'll send it over"}
@@ -246,6 +283,15 @@ export default function CampaignDetailPage() {
             <FieldBox>
               {campaign.followPromptButtonLabel || "i'm following"}
             </FieldBox>
+            {campaign.profileButtonLabel && (
+              <FieldBox>{campaign.profileButtonLabel}</FieldBox>
+            )}
+            {campaign.followGateStrict && campaign.followNotFollowingMessage && (
+              <FieldBox>{campaign.followNotFollowingMessage}</FieldBox>
+            )}
+            {campaign.followGateStrict && campaign.followUnknownMessage && (
+              <FieldBox>{campaign.followUnknownMessage}</FieldBox>
+            )}
           </Summary>
         )}
 
@@ -335,6 +381,41 @@ export default function CampaignDetailPage() {
                 </p>
               </div>
             ))}
+          </div>
+        )}
+
+        {tab === "insights" && campaign.requireFollow && gateStats && (
+          <div className="space-y-3">
+            <h2 className="text-sm font-semibold text-foreground">
+              {t("Follow gate")}
+            </h2>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              {[
+                { label: t("Entries"), value: gateStats.entries, hint: t("{count} people", { count: gateStats.uniquePeople }) },
+                { label: t("Confirmed following"), value: gateStats.checks.FOLLOWS, hint: t("{count} people", { count: gateStats.peopleConfirmed }) },
+                { label: t("Not following"), value: gateStats.checks.NOT_FOLLOWING, hint: t("checks") },
+                { label: t("Unknown"), value: gateStats.checks.UNKNOWN, hint: t("checks") },
+                { label: t("Delivered"), value: gateStats.delivered, hint: t("confirmed by Instagram") },
+                { label: t("Uncertain delivery"), value: gateStats.deliveryUncertain, hint: t("not resent automatically") },
+                { label: t("Delivery failed"), value: gateStats.deliveryFailed, hint: t("rejected by Instagram") },
+                { label: t("Link clicks"), value: gateStats.uniqueClicks, hint: t("unique people") },
+              ].map((m) => (
+                <div key={m.label} className="panel rounded p-4">
+                  <p className="text-sm text-muted">{m.label}</p>
+                  <p className="mt-1 text-2xl font-semibold text-foreground">{m.value}</p>
+                  <p className="mt-1 text-xs text-muted">{m.hint}</p>
+                </div>
+              ))}
+            </div>
+            {gateStats.unknownReasons.length > 0 && (
+              <p className="text-xs text-muted">
+                {t("Unknown reasons:")}{" "}
+                {gateStats.unknownReasons.map((r) => `${r.reason} (${r.count})`).join(", ")}
+              </p>
+            )}
+            <p className="text-xs text-muted">
+              {t("A confirmed check is not a new follower: the person may have followed before the campaign.")}
+            </p>
           </div>
         )}
 

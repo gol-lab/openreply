@@ -193,6 +193,18 @@ model Automation {
   requireFollow           Boolean @default(false)
   followPromptMessage     String?
   followPromptButtonLabel String?
+  // Strict follow gate: the link goes out only when Instagram confirms the
+  // follow. A missing field, an API error or a timeout keeps it locked (the
+  // default gate fails open). See lib/follow-gate.
+  followGateStrict          Boolean @default(false)
+  followNotFollowingMessage String?
+  followUnknownMessage      String?
+  // Optional web_url button next to the follow check, opening the account's
+  // profile. It only opens the profile; it never follows on anyone's behalf.
+  profileButtonLabel        String?
+  // Post the public comment reply only after the private reply was confirmed
+  // sent, instead of before it.
+  publicReplyAfterDm        Boolean @default(false)
   followUpEnabled Boolean @default(false)
   followUpMessage String?
   // Minutes to wait after the link is delivered before sending the follow-up.
@@ -214,6 +226,7 @@ model Automation {
   dmLogs           DmLog[]
   trackedLinks     TrackedLink[]
   linkClicks       LinkClick[]
+  followChecks     FollowCheck[]
 
   @@index([workspaceId])
   @@index([instagramAccountId])
@@ -418,4 +431,34 @@ model ZernioConnection {
 model PostbackDelivery {
   id String @id
   createdAt DateTime @default(now())
+}
+
+/// One follow-status lookup against Instagram for one person in one campaign.
+/// A FOLLOWS row means "already followed at check time", not a follower won by
+/// the campaign: the person may have followed long before commenting.
+model FollowCheck {
+  id                 String            @id @default(cuid())
+  workspaceId        String
+  automationId       String
+  instagramAccountId String
+  userId             String
+  result             FollowCheckResult
+  // Short machine reason for UNKNOWN (timeout, http_400, field_missing...).
+  // Never contains tokens or response bodies.
+  reason             String?
+  // OPENING_TAP | RETRY_TAP | RECHECK | DM
+  source             String
+  createdAt          DateTime          @default(now())
+
+  automation Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
+  @@index([automationId, result])
+  @@index([automationId, userId])
+  @@index([workspaceId])
+}
+
+enum FollowCheckResult {
+  FOLLOWS
+  NOT_FOLLOWING
+  UNKNOWN
 }

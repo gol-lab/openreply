@@ -270,3 +270,48 @@ export async function sendCommentReply({
   if (!result?.data?.commentId) throw new ZernioDeliveryUnconfirmedError();
   return { id: result.data.commentId };
 }
+
+/**
+ * Button template with mixed postback / web_url buttons, as a private reply
+ * (commentId) or as a DM (userId). Used by the strict follow gate to pair the
+ * "I'm following" check with a button that opens the profile.
+ */
+export async function sendButtonsMessage({
+  context,
+  instagramAccountId,
+  commentId,
+  userId,
+  postId,
+  text,
+  buttons,
+}: {
+  context: InstagramContext;
+  instagramAccountId: string;
+  commentId?: string;
+  userId?: string;
+  postId?: string;
+  text: string;
+  buttons: meta.TemplateButton[];
+}) {
+  if (!commentId && !userId) throw new Error("A recipient is required");
+  if (context.provider === "META")
+    return meta.sendButtonTemplate(
+      context.accessToken,
+      instagramAccountId,
+      commentId ? { comment_id: commentId } : { id: userId! },
+      text,
+      buttons
+    );
+  return sendZernioMessage({
+    context,
+    commentId,
+    recipientId: commentId ? undefined : userId,
+    postId,
+    text,
+    buttons: buttons.slice(0, 3).map((b): Button =>
+      b.type === "postback"
+        ? { type: "postback", title: b.title.slice(0, 20), payload: b.payload }
+        : { type: "url", title: b.title.slice(0, 20), url: b.url }
+    ),
+  });
+}

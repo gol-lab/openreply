@@ -43,3 +43,7 @@ next-env.d.ts
 
 /app/generated/prisma
 .gstack/
+!deploy/.env.prod.example
+
+# local login link written by scripts/dev-mail-sink.mjs
+.dev-login-link.txt

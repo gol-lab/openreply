@@ -283,6 +283,106 @@ export async function getUserFollowStatus(
   }
 }
 
+export type FollowCheckOutcome =
+  | { state: "FOLLOWS" }
+  | { state: "NOT_FOLLOWING" }
+  | { state: "UNKNOWN"; reason: string };
+
+/**
+ * Strict variant of getUserFollowStatus for the strict follow gate: tells a
+ * real `false` apart from "could not tell", and says why it could not tell.
+ * Only a boolean `is_user_follow_business` counts as an answer. The reason
+ * carries Meta's numeric code, never the token or the response body.
+ */
+export async function checkUserFollowsBusiness(
+  accessToken: string,
+  recipientId: string,
+  timeoutMs = 8000
+): Promise<FollowCheckOutcome> {
+  const url = new URL(`${instagramGraphBase()}/${recipientId}`);
+  url.searchParams.set("fields", "is_user_follow_business");
+
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      method: "GET",
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    const name = error instanceof Error ? error.name : "";
+    return {
+      state: "UNKNOWN",
+      reason: name === "TimeoutError" || name === "AbortError" ? "timeout" : "network",
+    };
+  }
+
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    return { state: "UNKNOWN", reason: `http_${response.status}_invalid_json` };
+  }
+
+  const error = (data as GraphApiError | null)?.error;
+  if (!response.ok || error) {
+    const code = error?.code ?? response.status;
+    const sub = error?.error_subcode ? `_${error.error_subcode}` : "";
+    return { state: "UNKNOWN", reason: `meta_error_${code}${sub}` };
+  }
+
+  const value = (data as { is_user_follow_business?: unknown })
+    .is_user_follow_business;
+  if (value === true) return { state: "FOLLOWS" };
+  if (value === false) return { state: "NOT_FOLLOWING" };
+  return { state: "UNKNOWN", reason: "field_missing" };
+}
+
+/** One button of a DM button template: a postback or a web_url link. */
+export type TemplateButton =
+  | { type: "postback"; title: string; payload: string }
+  | { type: "web_url"; title: string; url: string };
+
+/**
+ * Send a button template mixing postback and web_url buttons (1-3), either as
+ * the private reply to a comment or as a DM to a user's IGSID.
+ */
+export async function sendButtonTemplate(
+  accessToken: string,
+  instagramAccountId: string,
+  recipient: { comment_id: string } | { id: string },
+  text: string,
+  buttons: TemplateButton[]
+): Promise<{ recipient_id: string; message_id: string }> {
+  const response = await fetch(
+    `${instagramGraphBase()}/${instagramAccountId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        recipient,
+        message: {
+          attachment: {
+            type: "template",
+            payload: {
+              template_type: "button",
+              text: text.slice(0, 640),
+              buttons: buttons
+                .slice(0, 3)
+                .map((b) => ({ ...b, title: b.title.slice(0, 20) })),
+            },
+          },
+        },
+      }),
+    }
+  );
+
+  return handleResponse(response);
+}
+
 /**
  * A tappable web_url button in a DM button template. Instagram's button
  * template supports up to 3 buttons; titles are capped at 20 chars by Meta.
@@ -825,7 +925,8 @@ export async function subscribeInstagramAccountToWebhooks(
         Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({
-        subscribed_fields: ["comments", "messages"],
+        // messaging_postbacks carries button taps (opening DM and follow-gate buttons).
+        subscribed_fields: ["comments", "messages", "messaging_postbacks"],
       }),
     }
   );

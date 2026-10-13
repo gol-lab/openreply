@@ -6,3 +6,6 @@ node_modules
 __tests__
 docs
 *.md
+.env*
+deploy/.env.prod
+.dev-login-link.txt

@@ -46,6 +46,11 @@ interface LoadedCampaign {
   requireFollow: boolean;
   followPromptMessage: string | null;
   followPromptButtonLabel: string | null;
+  followGateStrict?: boolean;
+  followNotFollowingMessage?: string | null;
+  followUnknownMessage?: string | null;
+  profileButtonLabel?: string | null;
+  publicReplyAfterDm?: boolean;
   followUpEnabled: boolean;
   followUpMessage: string | null;
   followUpDelayMinutes: number | null;
@@ -179,6 +184,12 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const [followPromptMessage, setFollowPromptMessage] = useState("");
   const [followPromptButtonLabel, setFollowPromptButtonLabel] =
     useState("i'm following");
+  // Strict gate is on by default: unknown follow status keeps the link locked.
+  const [followGateStrict, setFollowGateStrict] = useState(true);
+  const [followNotFollowingMessage, setFollowNotFollowingMessage] = useState("");
+  const [followUnknownMessage, setFollowUnknownMessage] = useState("");
+  const [profileButtonLabel, setProfileButtonLabel] = useState("");
+  const [publicReplyAfterDm, setPublicReplyAfterDm] = useState(true);
   const [followUpEnabled, setFollowUpEnabled] = useState(false);
   const [followUpMessage, setFollowUpMessage] = useState("");
   const [followUpDelayMinutes, setFollowUpDelayMinutes] = useState(0);
@@ -287,6 +298,11 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         setFollowPromptButtonLabel(
           c.followPromptButtonLabel ?? "i'm following"
         );
+        setFollowGateStrict(c.followGateStrict ?? false);
+        setFollowNotFollowingMessage(c.followNotFollowingMessage ?? "");
+        setFollowUnknownMessage(c.followUnknownMessage ?? "");
+        setProfileButtonLabel(c.profileButtonLabel ?? "");
+        setPublicReplyAfterDm(c.publicReplyAfterDm ?? false);
         setFollowUpEnabled(c.followUpEnabled ?? false);
         setFollowUpMessage(c.followUpMessage ?? "");
         setFollowUpDelayMinutes(c.followUpDelayMinutes ?? 0);
@@ -426,6 +442,11 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       followPromptButtonLabel: requireFollow
         ? followPromptButtonLabel.trim() || "i'm following"
         : "",
+      followGateStrict: requireFollow && followGateStrict,
+      followNotFollowingMessage: requireFollow ? followNotFollowingMessage.trim() : "",
+      followUnknownMessage: requireFollow ? followUnknownMessage.trim() : "",
+      profileButtonLabel: requireFollow ? profileButtonLabel.trim() : "",
+      publicReplyAfterDm,
       followUpEnabled,
       followUpMessage: followUpEnabled ? followUpMessage.trim() : "",
       followUpDelayMinutes: followUpEnabled ? followUpDelayMinutes : 0,
@@ -794,6 +815,15 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
               <p className="text-xs text-muted">
                 {t("One is picked at random each time, so replies don't look identical.")}
               </p>
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
+                <span className="text-sm text-foreground">
+                  {t("only after the DM is confirmed sent")}
+                </span>
+                <Toggle
+                  on={publicReplyAfterDm}
+                  onToggle={() => setPublicReplyAfterDm(!publicReplyAfterDm)}
+                />
+              </div>
             </div>
           )}
         </Section>
@@ -854,9 +884,52 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
                   className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
                   maxLength={20}
                 />
+                <input
+                  value={profileButtonLabel}
+                  onChange={(e) => setProfileButtonLabel(e.target.value)}
+                  placeholder={t("Profile button label (optional)")}
+                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
+                  maxLength={20}
+                />
                 <p className="text-xs text-muted">
-                  {t("We send the link only after they tap the button and Instagram confirms the follow. If it can't be verified, we send it anyway.")}
+                  {t("Opens your profile. It does not follow on tap.")}
                 </p>
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
+                  <span className="text-sm text-foreground">
+                    {t("require a confirmed follow")}
+                  </span>
+                  <Toggle
+                    on={followGateStrict}
+                    onToggle={() => setFollowGateStrict(!followGateStrict)}
+                  />
+                </div>
+                {followGateStrict ? (
+                  <>
+                    <textarea
+                      value={followNotFollowingMessage}
+                      onChange={(e) => setFollowNotFollowingMessage(e.target.value)}
+                      placeholder={t("If Instagram says they don't follow yet")}
+                      rows={3}
+                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none resize-none"
+                      maxLength={640}
+                    />
+                    <textarea
+                      value={followUnknownMessage}
+                      onChange={(e) => setFollowUnknownMessage(e.target.value)}
+                      placeholder={t("If the follow can't be checked right now")}
+                      rows={3}
+                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none resize-none"
+                      maxLength={640}
+                    />
+                    <p className="text-xs text-muted">
+                      {t("The link goes out only when Instagram confirms the follow. If Instagram doesn't answer, it stays locked and they can tap again.")}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-xs text-muted">
+                    {t("We send the link only after they tap the button and Instagram confirms the follow. If it can't be verified, we send it anyway.")}
+                  </p>
+                )}
               </div>
             )}
           </div>

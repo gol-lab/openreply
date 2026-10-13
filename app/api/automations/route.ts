@@ -44,6 +44,12 @@ const createAutomationSchema = z
     requireFollow: z.boolean().optional().default(false),
     followPromptMessage: z.string().max(1000).optional().nullable(),
     followPromptButtonLabel: z.string().max(20).optional().nullable(),
+    // Strict gate: release only on a confirmed follow (see lib/follow-gate).
+    followGateStrict: z.boolean().optional().default(false),
+    followNotFollowingMessage: z.string().max(640).optional().nullable(),
+    followUnknownMessage: z.string().max(640).optional().nullable(),
+    profileButtonLabel: z.string().max(20).optional().nullable(),
+    publicReplyAfterDm: z.boolean().optional().default(false),
     followUpEnabled: z.boolean().optional().default(false),
     followUpMessage: z.string().max(1000).optional().nullable(),
     // Minutes to wait before the follow-up. Capped at 24h so it stays inside
@@ -80,6 +86,14 @@ const createAutomationSchema = z
     message: "Add at least one keyword, or match any word",
     path: ["keywords"],
   })
+  // A strict follow-gate campaign exists to hand over a link: it cannot go
+  // live without one, or a confirmed follower would get a message with nothing.
+  .refine(
+    (d) =>
+      !(d.isActive && d.requireFollow && d.followGateStrict) ||
+      Boolean(d.trackedDestinationUrl),
+    { message: "Cole a URL do conteúdo antes de ativar a campanha", path: ["trackedDestinationUrl"] }
+  )
   // An opening DM needs both a message and a button label.
   .refine(
     (d) =>
@@ -107,6 +121,11 @@ const updateAutomationSchema = z.object({
   requireFollow: z.boolean().optional(),
   followPromptMessage: z.string().max(1000).optional().nullable(),
   followPromptButtonLabel: z.string().max(20).optional().nullable(),
+  followGateStrict: z.boolean().optional(),
+  followNotFollowingMessage: z.string().max(640).optional().nullable(),
+  followUnknownMessage: z.string().max(640).optional().nullable(),
+  profileButtonLabel: z.string().max(20).optional().nullable(),
+  publicReplyAfterDm: z.boolean().optional(),
   followUpEnabled: z.boolean().optional(),
   followUpMessage: z.string().max(1000).optional().nullable(),
   followUpDelayMinutes: z.number().int().min(0).max(1440).optional(),
@@ -399,6 +418,17 @@ export async function POST(request: NextRequest) {
       followPromptButtonLabel: parsed.data.requireFollow
         ? parsed.data.followPromptButtonLabel || null
         : null,
+      followGateStrict: parsed.data.requireFollow && parsed.data.followGateStrict,
+      followNotFollowingMessage: parsed.data.requireFollow
+        ? parsed.data.followNotFollowingMessage?.trim() || null
+        : null,
+      followUnknownMessage: parsed.data.requireFollow
+        ? parsed.data.followUnknownMessage?.trim() || null
+        : null,
+      profileButtonLabel: parsed.data.requireFollow
+        ? parsed.data.profileButtonLabel?.trim() || null
+        : null,
+      publicReplyAfterDm: parsed.data.publicReplyAfterDm,
       followUpEnabled: parsed.data.followUpEnabled,
       followUpMessage: parsed.data.followUpEnabled
         ? parsed.data.followUpMessage || null
@@ -501,6 +531,10 @@ export async function PATCH(request: NextRequest) {
   if (automationData.requireFollow === false) {
     automationData.followPromptMessage = null;
     automationData.followPromptButtonLabel = null;
+    automationData.followGateStrict = false;
+    automationData.followNotFollowingMessage = null;
+    automationData.followUnknownMessage = null;
+    automationData.profileButtonLabel = null;
   }
   if (automationData.followUpEnabled === false) {
     automationData.followUpMessage = null;
@@ -541,11 +575,36 @@ export async function PATCH(request: NextRequest) {
       secondaryLabel: secondaryButtonLabel,
     });
 
+    if (campaign.isActive && campaign.requireFollow && campaign.followGateStrict) {
+      const links = await tx.trackedLink.count({ where: { automationId } });
+      const hasTarget =
+        Boolean(campaign.postId) || campaign.matchAnyPost || campaign.pendingNextReel;
+      if (links === 0 || !hasTarget) {
+        throw new GoLiveBlocked(
+          links === 0
+            ? "Cole a URL do conteúdo antes de ativar a campanha"
+            : "Escolha o post ou Reel antes de ativar a campanha"
+        );
+      }
+    }
+
     return campaign;
+  }).catch((error: unknown) => {
+    if (error instanceof GoLiveBlocked) return error;
+    throw error;
   });
+
+  if (updated instanceof GoLiveBlocked) {
+    return NextResponse.json(
+      { success: false, error: updated.message },
+      { status: 400 }
+    );
+  }
 
   return NextResponse.json({ success: true, data: updated });
 }
+
+class GoLiveBlocked extends Error {}
 
 export async function DELETE(request: NextRequest) {
   const context = await getCurrentWorkspaceContext();

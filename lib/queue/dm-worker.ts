@@ -32,6 +32,8 @@ import {
   sendPrivateReply,
   sendPrivateReplyWithButton,
   sendPrivateReplyWithLinkButton,
+  sendButtonsMessage,
+  checkFollowStatus,
 } from "@/lib/instagram/provider";
 import {
   createInstagramContext,
@@ -52,6 +54,13 @@ import {
 } from "@/lib/tracking/message";
 import { TRACKED_LINK_ORDER } from "@/lib/tracking/link-order";
 import { hashRecipientId } from "@/lib/tracking/server";
+import {
+  buildGateButtons,
+  decideGateAction,
+  gatePromptText,
+  parseGatePayload,
+  type GateSource,
+} from "@/lib/follow-gate/decision";
 
 import { ZernioApiError } from "@/lib/zernio/client";
 
@@ -80,6 +89,23 @@ const FOLLOW_RECHECK_TOTAL_MS = FOLLOW_RECHECK_DELAYS_MS.reduce(
   (total, ms) => total + ms,
   0
 );
+
+// Strict gate: minimum gap between two Instagram lookups triggered by taps
+// from the same person on the same campaign. Taps inside the gap are ignored;
+// the queued re-checks still catch a follow that registers late.
+const FOLLOW_GATE_COOLDOWN_MS = Number(
+  process.env.FOLLOW_GATE_COOLDOWN_MS ?? "10000"
+);
+const FOLLOW_CHECK_TIMEOUT_MS = Number(
+  process.env.FOLLOW_CHECK_TIMEOUT_MS ?? "8000"
+);
+
+function isStrictGate(automation: {
+  requireFollow: boolean;
+  followGateStrict: boolean;
+}): boolean {
+  return automation.requireFollow && automation.followGateStrict;
+}
 
 /**
  * Sends Meta answered with an error but may well have delivered anyway.
@@ -444,13 +470,16 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
 
     // Public reply leg — decoupled from the DM and posted first so a DM failure
     // (e.g. a non-follower whose messaging is restricted) never suppresses it.
-    // Idempotent across retries via publicReplySentAt.
+    // Idempotent across retries via publicReplySentAt. With publicReplyAfterDm
+    // it waits for a confirmed private reply instead (see below), so the post
+    // never says "check your DMs" when no DM went out.
     const replyPool =
       automation.publicReplyMessages.length > 0
         ? automation.publicReplyMessages
         : automation.publicReplyMessage
           ? [automation.publicReplyMessage]
           : [];
+    const postPublicReply = async () => {
     if (
       automation.publicReplyEnabled &&
       replyPool.length > 0 &&
@@ -495,6 +524,9 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           .catch(() => {});
       }
     }
+    };
+
+    if (!automation.publicReplyAfterDm || alreadyDmd) await postPublicReply();
 
     // DM already sent on an earlier pass; the public reply retry above was all
     // this run needed. Don't re-send the DM.
@@ -636,8 +668,13 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
     // (opening DM → follow gate → link). Without an opening DM, we check follow
     // status at comment time: confirmed followers get the link now, everyone
     // else gets the "follow me first" prompt (re-verified on tap).
+    const strictGate = isStrictGate(automation);
     let sendFollowPrompt = false;
-    if (automation.requireFollow && !useOpeningDm) {
+    if (strictGate && !useOpeningDm) {
+      // Strict: a comment never grants profile consent, so a lookup here can
+      // only come back unknown. Everyone gets the prompt; the tap checks.
+      sendFollowPrompt = true;
+    } else if (automation.requireFollow && !useOpeningDm) {
       const alreadyFollows = await getUserFollowStatus({
         context: accessToken,
         recipientId: commenterId,
@@ -679,6 +716,27 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           // own "I'm following" button, which sends the same prefix.
           payload: `${automation.requireFollow ? "followcheck" : "reveal"}:${automation.id}:open`,
           postId: mediaId,
+        });
+      } else if (sendFollowPrompt && strictGate) {
+        await sendButtonsMessage({
+          context: accessToken,
+          instagramAccountId: automation.instagramAccount.instagramId,
+          commentId,
+          postId: mediaId,
+          text: renderMessageWithoutLink({
+            message: gatePromptText(
+              "follow",
+              automation,
+              automation.instagramAccount.username
+            ),
+            commenterName,
+          }),
+          buttons: buildGateButtons({
+            automationId: automation.id,
+            checkLabel: automation.followPromptButtonLabel,
+            profileLabel: automation.profileButtonLabel,
+            accountUsername: automation.instagramAccount.username,
+          }),
         });
       } else if (sendFollowPrompt) {
         const promptText = renderMessageWithoutLink({
@@ -778,6 +836,14 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           errorMessage: null,
         },
       });
+      if (automation.publicReplyAfterDm) {
+        await postPublicReply().catch((error) =>
+          console.error(
+            "[DM Worker] Public reply after DM failed:",
+            formatError(error)
+          )
+        );
+      }
     } catch (error) {
       const sendError = classifySendError(error);
       // Retain reservations if the provider may have delivered the message.
@@ -880,6 +946,284 @@ async function sendFollowRecheckAck({
   }
 }
 
+type StrictGateAutomation = RevealAutomation & {
+  id: string;
+  name: string;
+  workspaceId: string;
+  instagramAccountId: string;
+  followPromptMessage: string | null;
+  followPromptButtonLabel: string | null;
+  followNotFollowingMessage: string | null;
+  followUnknownMessage: string | null;
+  profileButtonLabel: string | null;
+  followUpEnabled: boolean;
+  followUpMessage: string | null;
+  followUpDelayMinutes: number;
+  instagramAccount: { instagramId: string; username: string };
+};
+
+/** Durable claim id: one delivery per person per campaign, ever. */
+export function strictDeliveryClaimId(automationId: string, userId: string) {
+  return `gate-deliver:${automationId}:${userId}`;
+}
+
+/**
+ * Strict follow gate. Runs on every gate interaction (opening tap, "I'm
+ * following" tap, delayed re-check, keyword DM) and decides on the server:
+ * a confirmed follow delivers the link once; "not following" and "unknown"
+ * each get their own message and never release anything.
+ */
+async function runStrictGate({
+  job,
+  automation,
+  accessToken,
+  userId,
+  commenterName,
+  source,
+  operationId,
+}: {
+  job: Job<ProcessPostbackJob> | Job<ProcessMessageJob>;
+  automation: StrictGateAutomation;
+  accessToken: InstagramContext;
+  userId: string;
+  commenterName: string | null;
+  source: GateSource;
+  operationId: string;
+}): Promise<void> {
+  const deliveryClaimId = strictDeliveryClaimId(automation.id, userId);
+
+  // Already delivered (or a delivery with an uncertain outcome is on record):
+  // never send the content twice.
+  const priorDelivery = await prisma.postbackDelivery.findUnique({
+    where: { id: deliveryClaimId },
+  });
+  if (priorDelivery) return;
+
+  // The interaction must belong to someone who entered this campaign on this
+  // account: a comment (or keyword DM) logged for this campaign and user.
+  const entry = await prisma.dmLog.findFirst({
+    where: {
+      automationId: automation.id,
+      commenterId: userId,
+      instagramAccountId: automation.instagramAccountId,
+      NOT: { commentId: { startsWith: "reveal:" } },
+    },
+    select: { id: true },
+  });
+  if (!entry) {
+    await prisma.operationalEvent
+      .create({
+        data: {
+          workspaceId: automation.workspaceId,
+          source: "WORKER",
+          level: "WARNING",
+          message: "Follow gate tap without a campaign entry was ignored",
+          payload: { automationId: automation.id, userId, source },
+        },
+      })
+      .catch(() => {});
+    return;
+  }
+
+  // Taps from the same person are rate limited; a retried job (attemptsMade
+  // > 0) and our own re-checks are not, or they would silently no-op.
+  if (source !== "RECHECK" && job.attemptsMade === 0) {
+    const acquired = await getRedisConnection().set(
+      // Per source: a quick "I'm following" right after the opening tap is a
+      // new request, not a repeat, and must not be swallowed.
+      `follow_gate_cooldown:${automation.id}:${userId}:${source}`,
+      "1",
+      "PX",
+      FOLLOW_GATE_COOLDOWN_MS,
+      "NX"
+    );
+    if (acquired !== "OK") return;
+  }
+
+  const outcome = await checkFollowStatus({
+    context: accessToken,
+    recipientId: userId,
+    timeoutMs: FOLLOW_CHECK_TIMEOUT_MS,
+  });
+  await prisma.followCheck
+    .create({
+      data: {
+        workspaceId: automation.workspaceId,
+        automationId: automation.id,
+        instagramAccountId: automation.instagramAccountId,
+        userId,
+        result: outcome.state,
+        reason: outcome.state === "UNKNOWN" ? outcome.reason : null,
+        source,
+      },
+    })
+    .catch((error) =>
+      console.error("[DM Worker] Failed to record follow check:", formatError(error))
+    );
+
+  const recheckData = job.data as ProcessPostbackJob;
+  const rechecksDone =
+    source === "RECHECK" ? recheckData.followRecheckAttempt ?? 1 : 0;
+  const rechecksRemaining = rechecksDone < FOLLOW_RECHECK_DELAYS_MS.length;
+  const action = decideGateAction({ source, outcome, rechecksRemaining });
+
+  const scheduleRecheck = async () => {
+    const delay = FOLLOW_RECHECK_DELAYS_MS[rechecksDone];
+    if (!delay) return;
+    const window = Math.floor(Date.now() / delay);
+    const data: ProcessPostbackJob = {
+      instagramAccountId: automation.instagramAccount.instagramId,
+      accountConnectionId: automation.instagramAccountId,
+      userId,
+      payload: `followcheck:${automation.id}`,
+      followRecheck: true,
+      followRecheckAttempt: rechecksDone + 1,
+    };
+    await getDMQueue().add(POSTBACK_JOB_NAME, data, {
+      delay,
+      jobId: `gate_recheck_${automation.id}_${userId}_${rechecksDone + 1}_${window}`,
+    });
+  };
+
+  if (action.kind === "STOP") return;
+  if (action.kind === "SCHEDULE_RECHECK") {
+    await scheduleRecheck();
+    return;
+  }
+
+  if (action.kind === "PROMPT") {
+    const send = () =>
+      sendButtonsMessage({
+        context: accessToken,
+        instagramAccountId: automation.instagramAccount.instagramId,
+        userId,
+        text: renderMessageWithoutLink({
+          message: gatePromptText(
+            action.message,
+            automation,
+            automation.instagramAccount.username
+          ),
+          commenterName,
+        }),
+        buttons: buildGateButtons({
+          automationId: automation.id,
+          checkLabel: automation.followPromptButtonLabel,
+          profileLabel: automation.profileButtonLabel,
+          accountUsername: automation.instagramAccount.username,
+        }),
+      });
+    try {
+      await sendPostbackOnce({ operationId: `${operationId}:gate`, send });
+    } catch (error) {
+      await prisma.operationalEvent
+        .create({
+          data: {
+            workspaceId: automation.workspaceId,
+            source: "WORKER",
+            level: "WARNING",
+            message: `Follow gate prompt not delivered: ${formatError(error)}`,
+            payload: {
+              automationId: automation.id,
+              userId,
+              prompt: action.message,
+              unconfirmed: isDeliveryUnconfirmed(error),
+            },
+          },
+        })
+        .catch(() => {});
+    }
+    if (action.scheduleRecheck) await scheduleRecheck();
+    return;
+  }
+
+  // DELIVER: confirmed follow.
+  const usage = await reserveWorkspaceDMSend(automation.workspaceId);
+  if (!usage.allowed) return;
+  const revealLog = {
+    workspaceId: automation.workspaceId,
+    automationId: automation.id,
+    instagramAccountId: automation.instagramAccountId,
+    commenterId: userId,
+    commenterName,
+    commentText: "(follow confirmed)",
+    commentId: `reveal:${userId}`,
+  };
+  try {
+    const delivered = await sendPostbackOnce({
+      operationId: deliveryClaimId,
+      send: () =>
+        sendRevealDirectMessage({
+          accessToken,
+          automation,
+          userId,
+          commenterName,
+          context: "strict follow gate",
+        }),
+    });
+    if (!delivered) {
+      await releaseWorkspaceDMReservation(automation.workspaceId, usage.periodStart);
+      return;
+    }
+    await prisma.dmLog.upsert({
+      where: {
+        automationId_commentId: {
+          automationId: automation.id,
+          commentId: revealLog.commentId,
+        },
+      },
+      create: { ...revealLog, status: "SENT", dmSentAt: new Date() },
+      update: {
+        status: "SENT",
+        dmSentAt: new Date(),
+        errorMessage: null,
+        dmDeliveryUnconfirmed: false,
+      },
+    });
+    if (automation.followUpEnabled && automation.followUpMessage?.trim()) {
+      await getDMQueue().add(
+        FOLLOWUP_JOB_NAME,
+        {
+          instagramAccountId: automation.instagramAccount.instagramId,
+          accountConnectionId: automation.instagramAccountId,
+          userId,
+          automationId: automation.id,
+          commenterName,
+        },
+        {
+          delay: Math.max(0, automation.followUpDelayMinutes ?? 0) * 60_000,
+          jobId: `followup_${automation.id}_${userId}`,
+        }
+      );
+    }
+  } catch (originalError) {
+    const error = classifySendError(originalError);
+    if (isConfirmedSendRejection(error))
+      await releaseWorkspaceDMReservation(automation.workspaceId, usage.periodStart);
+    await prisma.dmLog.upsert({
+      where: {
+        automationId_commentId: {
+          automationId: automation.id,
+          commentId: revealLog.commentId,
+        },
+      },
+      create: {
+        ...revealLog,
+        status: "FAILED",
+        errorMessage: formatError(error),
+        dmDeliveryUnconfirmed: isDeliveryUnconfirmed(error),
+      },
+      update: {
+        status: "FAILED",
+        errorMessage: formatError(error),
+        dmDeliveryUnconfirmed: isDeliveryUnconfirmed(error),
+      },
+    });
+    // A confirmed rejection released the claim, so a retry may deliver; an
+    // uncertain outcome keeps the claim and processJob stops the retries.
+    throw error;
+  }
+}
+
 /**
  * Deliver the reveal message after a user taps an opening DM's button.
  * The postback payload is `reveal:<automationId>`; the sender is the user's
@@ -962,6 +1306,28 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
       job.data.mid ?? job.id ?? payload,
     ]))
     .digest("hex");
+
+  if (isStrictGate(automation)) {
+    // The read fallback exists to hand the link to someone who never tapped.
+    // A strict gate only releases on a tap that Instagram confirms, so it
+    // never acts on reads.
+    if (fallback) return;
+    const source: GateSource = job.data.followRecheck
+      ? "RECHECK"
+      : parseGatePayload(payload)?.fromOpeningDm || !isFollowCheck
+        ? "OPENING_TAP"
+        : "RETRY_TAP";
+    await runStrictGate({
+      job,
+      automation,
+      accessToken,
+      userId,
+      commenterName,
+      source,
+      operationId,
+    });
+    return;
+  }
 
   // Follow-gate: before revealing the link, verify the user follows. On a
   // `followcheck:` tap a non-follower gets the prompt again (no quota spent);
@@ -1394,6 +1760,51 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
       select: { commenterName: true },
     });
     const commenterName = priorLog?.commenterName ?? null;
+
+    if (isStrictGate(automation)) {
+      // The keyword DM is the person's entry into the campaign: log it first,
+      // so the gate (and later taps) can tie the interaction to this campaign.
+      await prisma.dmLog.upsert({
+        where: {
+          automationId_commentId: { automationId: automation.id, commentId: dedupeId },
+        },
+        create: { ...logBase, commenterName, status: "PENDING" },
+        update: {},
+      });
+      try {
+        await runStrictGate({
+          job,
+          automation,
+          accessToken,
+          userId: senderId,
+          commenterName,
+          source: "DM",
+          operationId: createHash("sha256")
+            .update(JSON.stringify([automation.instagramAccountId, automation.id, senderId, dedupeId]))
+            .digest("hex"),
+        });
+        await prisma.dmLog.update({
+          where: {
+            automationId_commentId: { automationId: automation.id, commentId: dedupeId },
+          },
+          data: { status: "SENT", dmSentAt: new Date(), errorMessage: null },
+        });
+      } catch (error) {
+        await prisma.dmLog.update({
+          where: {
+            automationId_commentId: { automationId: automation.id, commentId: dedupeId },
+          },
+          data: {
+            status: "FAILED",
+            attempts: job.attemptsMade + 1,
+            errorMessage: formatError(error),
+            dmDeliveryUnconfirmed: isDeliveryUnconfirmed(error),
+          },
+        });
+        throw error;
+      }
+      continue;
+    }
 
     // Follow gate: anyone not confirmed as a follower gets the prompt instead of
     // the link, with the same `followcheck:` button that re-verifies on tap.

@@ -1,0 +1,6 @@
+# HTTPS automático (Let's Encrypt) para o domínio em APP_DOMAIN.
+# O DNS do domínio precisa apontar (registro A) para o IP do servidor.
+{$APP_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy web:3000
+}

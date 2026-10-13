@@ -22,6 +22,35 @@ export async function getUserFollowStatus({
   }
 }
 
+/**
+ * Three-state follow lookup for the strict follow gate. Unlike
+ * getUserFollowStatus it never collapses an error into a plain null: the
+ * reason is kept so the panel can show why a check came back unknown.
+ */
+export async function checkFollowStatus({
+  context,
+  recipientId,
+  timeoutMs,
+}: {
+  context: InstagramContext;
+  recipientId: string;
+  timeoutMs?: number;
+}): Promise<meta.FollowCheckOutcome> {
+  if (context.provider === "META")
+    return meta.checkUserFollowsBusiness(context.accessToken, recipientId, timeoutMs);
+  try {
+    const result = await zernioRequest<{ isFollower: boolean | null }>({
+      apiKey: context.apiKey,
+      path: `/accounts/${encodeURIComponent(context.accountId)}/follow-status/${encodeURIComponent(recipientId)}?refresh=true`,
+    });
+    if (result.isFollower === true) return { state: "FOLLOWS" };
+    if (result.isFollower === false) return { state: "NOT_FOLLOWING" };
+    return { state: "UNKNOWN", reason: "field_missing" };
+  } catch {
+    return { state: "UNKNOWN", reason: "provider_error" };
+  }
+}
+
 export async function getMediaInsights({
   context,
   mediaId,

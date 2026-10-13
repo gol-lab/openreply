@@ -1,0 +1,112 @@
+# GOL LAB — OpenReply em produção num VPS (Linux + Docker).
+#
+#   cp deploy/.env.prod.example deploy/.env.prod   # preencha os valores
+#   docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod up -d --build
+#
+# Sobe: Postgres, Redis, migração (roda e sai), web (Next.js), worker (envia as
+# DMs), cron (refresh do token e afins) e Caddy (HTTPS automático via
+# Let's Encrypt). Todos com restart: unless-stopped, então voltam sozinhos
+# depois de queda ou reboot do servidor.
+
+x-app: &app
+  build:
+    context: ..
+    dockerfile: Dockerfile
+  image: gollab-openreply:latest
+  env_file: .env.prod
+  environment:
+    DATABASE_URL: postgresql://openreply:${POSTGRES_PASSWORD}@postgres:5432/openreply
+    REDIS_URL: redis://redis:6379
+    NODE_ENV: production
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: openreply
+      POSTGRES_USER: openreply
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openreply"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    # AOF: a fila (re-verificações agendadas, entregas na fila) sobrevive a
+    # um restart. noeviction é o que o BullMQ exige.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    <<: *app
+    command: ["npx", "prisma", "migrate", "deploy"]
+    restart: "no"
+
+  web:
+    <<: *app
+    command: ["npm", "run", "start"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *app
+    command: ["npm", "run", "worker"]
+    environment:
+      DATABASE_URL: postgresql://openreply:${POSTGRES_PASSWORD}@postgres:5432/openreply
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+      DB_POOL_MAX: "5"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  cron:
+    <<: *app
+    command: ["sh", "scripts/cron.sh"]
+    environment:
+      DATABASE_URL: postgresql://openreply:${POSTGRES_PASSWORD}@postgres:5432/openreply
+      REDIS_URL: redis://redis:6379
+      CRON_BASE_URL: http://web:3000
+    depends_on:
+      web:
+        condition: service_started
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - web
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  caddydata:
+  caddyconfig:
