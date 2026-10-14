@@ -58,6 +58,7 @@ import { hashRecipientId } from "@/lib/tracking/server";
 import {
   buildGateButtons,
   decideGateAction,
+  DEFAULT_GATE_TEXT,
   gatePromptText,
   parseGatePayload,
   type GateSource,
@@ -998,7 +999,25 @@ async function runStrictGate({
   const priorDelivery = await prisma.postbackDelivery.findUnique({
     where: { id: deliveryClaimId },
   });
-  if (priorDelivery) return;
+  if (priorDelivery) {
+    // Say so instead of going silent: the person tapped and expects an answer.
+    // Re-checks stay quiet; one reply per tap (claimed by the tap's id).
+    if (source !== "RECHECK") {
+      await sendPostbackOnce({
+        operationId: `${operationId}:already`,
+        send: () =>
+          sendDirectMessage({
+            context: accessToken,
+            instagramAccountId: automation.instagramAccount.instagramId,
+            userId,
+            message: DEFAULT_GATE_TEXT.alreadyDelivered,
+          }),
+      }).catch((error) =>
+        console.log("[DM Worker] Failed to send already-delivered note:", formatError(error))
+      );
+    }
+    return;
+  }
 
   // The interaction must belong to someone who entered this campaign on this
   // account: a comment (or keyword DM) logged for this campaign and user.

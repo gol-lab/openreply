@@ -83,6 +83,8 @@ export const DEFAULT_GATE_TEXT = {
   unknown:
     "Não consegui verificar agora. Aguarde um pouco e toque no botão para tentar novamente.",
   delivery: "Tudo certo! Aqui está o conteúdo que você pediu.",
+  alreadyDelivered:
+    "Você já recebeu esse conteúdo aqui na conversa. É só rolar a tela para cima.",
   deliveryButton: "Acessar conteúdo",
 } as const;
 

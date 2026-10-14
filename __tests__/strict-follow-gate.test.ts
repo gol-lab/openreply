@@ -307,6 +307,9 @@ describe("strict follow gate — release rule", () => {
 
     expect(sentLink()).toBe(1);
     expect(h.checkUserFollowsBusiness).toHaveBeenCalledTimes(1);
+    // Each later tap gets a short "you already have it" note, not silence.
+    expect(h.sendDirectMessage).toHaveBeenCalledTimes(2);
+    expect(h.sendDirectMessage.mock.calls[0][3]).toContain("Você já recebeu");
   });
 
   it("5d. a tap and a re-check racing to deliver: one send", async () => {
