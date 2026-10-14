@@ -187,7 +187,7 @@ export default function CampaignDetailPage() {
   const trigger = campaign.matchAnyPost
     ? t("Any post or reel")
     : campaign.pendingNextReel
-      ? t("Your next reel")
+      ? t("Your next post or reel")
       : t("A specific post or reel");
   const matchText = campaign.matchAnyWord
     ? t("Any comment")
