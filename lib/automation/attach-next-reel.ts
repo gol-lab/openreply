@@ -6,8 +6,10 @@ import {
   type InstagramMedia,
 } from "@/lib/instagram/provider";
 
-function isReel(media: InstagramMedia): boolean {
-  return media.media_product_type === "REELS";
+// "Next post or reel": any feed post (photo, carousel) or reel. Stories have
+// no comments, so they never qualify.
+function isPostOrReel(media: InstagramMedia): boolean {
+  return media.media_product_type !== "STORY";
 }
 
 export type AttachNextReelResult = {
@@ -59,7 +61,7 @@ export async function attachPendingNextReels(): Promise<AttachNextReelResult> {
       const context = await createInstagramContext(account);
       const media = await getUserMedia({ context, limit: 25 });
       reels = media
-        .filter(isReel)
+        .filter(isPostOrReel)
         .sort(
           (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
         );
@@ -70,10 +72,11 @@ export async function attachPendingNextReels(): Promise<AttachNextReelResult> {
     }
 
     for (const automation of automations) {
-      // The "next" reel = the earliest one posted after the campaign was created.
-      const nextReel = reels.find(
-        (reel) => new Date(reel.timestamp) > automation.createdAt
-      );
+      // The "next" post = the earliest one published after the campaign was
+      // switched to "next post" (falling back to its creation for older rows),
+      // so an edit to an older campaign never grabs a post already published.
+      const since = automation.pendingNextSince ?? automation.createdAt;
+      const nextReel = reels.find((reel) => new Date(reel.timestamp) > since);
       if (!nextReel) continue;
 
       await prisma.automation.update({

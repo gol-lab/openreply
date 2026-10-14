@@ -178,6 +178,9 @@ model Automation {
   postId         String?
   postUrl        String?
   pendingNextReel Boolean @default(false)
+  // When the campaign was switched to "next post or reel". The next post is the
+  // first one published after this moment.
+  pendingNextSince DateTime?
   matchAnyPost   Boolean @default(false)
   keywords       String[]
   matchAnyWord   Boolean @default(false)

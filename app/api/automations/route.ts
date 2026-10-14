@@ -407,6 +407,7 @@ export async function POST(request: NextRequest) {
       postId: isSpecificPost ? parsed.data.postId : null,
       postUrl: isSpecificPost ? parsed.data.postUrl : null,
       pendingNextReel,
+      pendingNextSince: pendingNextReel ? new Date() : null,
       matchAnyPost,
       keywords: matchAnyWord ? [] : parsed.data.keywords,
       matchAnyWord,
@@ -549,6 +550,11 @@ export async function PATCH(request: NextRequest) {
     automationData.followUpMessage = null;
     automationData.followUpDelayMinutes = 0;
   }
+  // Start counting "next post" from the moment it is switched on.
+  const nextPostData =
+    automationData.pendingNextReel === true && !existing.pendingNextReel
+      ? { pendingNextSince: new Date() }
+      : {};
   // Any-post / next-reel campaigns carry no specific post.
   if (automationData.matchAnyPost === true || automationData.pendingNextReel === true) {
     automationData.postId = null;
@@ -573,7 +579,7 @@ export async function PATCH(request: NextRequest) {
   const updated = await prisma.$transaction(async (tx) => {
     const campaign = await tx.automation.update({
       where: { id: automationId },
-      data: automationData,
+      data: { ...automationData, ...nextPostData },
     });
 
     await syncCampaignLinks(tx, {
