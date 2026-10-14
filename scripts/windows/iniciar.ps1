@@ -54,5 +54,16 @@ if (-not $existing) {
   Write-Host "Worker iniciado (com reinicio automatico)"
 } else { Write-Host "Worker ja estava rodando" }
 
+# Túnel fixo bot.gollab.com.br (Cloudflare) -> painel local.
+$tunnelCfg = Join-Path $Infra "cloudflared\config.yml"
+if (Test-Path $tunnelCfg) {
+  $tun = Get-CimInstance Win32_Process -Filter "Name='cloudflared.exe'" | Where-Object { $_.CommandLine -like "*config.yml*" }
+  if (-not $tun) {
+    Start-Process -WindowStyle Hidden -FilePath (Join-Path $Infra "cloudflared\cloudflared.exe") `
+      -ArgumentList "tunnel","--no-autoupdate","--config","`"$tunnelCfg`"","--logfile","`"$Logs\tunel-fixo.log`"","run"
+    Write-Host "Tunel fixo iniciado: https://bot.gollab.com.br"
+  } else { Write-Host "Tunel fixo ja estava rodando" }
+}
+
 Start-Sleep 8
 try { (Invoke-WebRequest -UseBasicParsing http://localhost:3000/api/health -TimeoutSec 20).Content } catch { Write-Host "Painel ainda subindo; veja $Logs\web.log" }
