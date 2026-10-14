@@ -1,9 +1,17 @@
 {
   "nome": "Yamal × Messi aos 19 anos",
-  "palavras": ["YAMAL", "MESSI"],
+  "palavras": [
+    "YAMAL",
+    "MESSI"
+  ],
   "abertura": "Vi que você comentou no post Yamal × Messi. Toque no botão abaixo que eu te mando o conteúdo.",
   "botaoAbertura": "Me envie o conteúdo",
   "entrega": "Aqui está a comparação completa, Yamal × Messi aos 19 anos e 93 dias 👇\n\nA CADA 90 MINUTOS (gols / assistências / participações em gols):\n\n🔵🔴 Pelo Barcelona\nYamal: 0,42 / 0,40 / 0,83\nMessi: 0,45 / 0,16 / 0,62\n\n🌍 Pela seleção\nYamal: 0,37 / 0,41 / 0,78\nMessi: 0,34 / 0,50 / 0,84\n\n📊 Somando tudo\nYamal: 0,41 / 0,40 / 0,82\nMessi: 0,43 / 0,23 / 0,66\n\nO Messi marcava um pouco mais por minuto, mas o Yamal dá muito mais assistências.\n\nFonte: oGol, jogos oficiais do time principal.",
-  "respostaPublica": "Te mandei os próximos passos no direct.",
-  "exigirSeguir": true
+  "respostaPublica": "Vou te mandar a comparação completa no direct!",
+  "exigirSeguir": true,
+  "respostasPublicas": [
+    "Vou te mandar a comparação completa no direct!",
+    "Pronto! Acabei de te enviar no seu direct.",
+    "Agora sim! Você pode decidir, pelos números, quem foi melhor com 19 anos e 93 dias de idade!"
+  ]
 }

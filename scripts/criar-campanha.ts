@@ -6,7 +6,8 @@
  *
  * Campos do arquivo (só nome, palavras e entrega são obrigatórios):
  *   nome, conta, palavras[], abertura, botaoAbertura, entrega,
- *   url, botaoEntrega, url2, botaoEntrega2, respostaPublica, exigirSeguir,
+ *   url, botaoEntrega, url2, botaoEntrega2, respostaPublica, respostasPublicas[] (sorteadas),
+ *   exigirSeguir,
  *   qualquerPost (vale em todos os posts), tambemNaDM (também quando mandam
  *   a palavra no direct)
  * Os textos da trava de seguidor seguem o padrão aprovado da ANALISE.
@@ -29,6 +30,7 @@ interface Spec {
   url2?: string;
   botaoEntrega2?: string;
   respostaPublica?: string | null;
+  respostasPublicas?: string[];
   exigirSeguir?: boolean;
   qualquerPost?: boolean;
   tambemNaDM?: boolean;
@@ -96,7 +98,9 @@ async function main() {
       linkButtonLabel: spec.url ? spec.botaoEntrega ?? "Acessar conteúdo" : null,
       publicReplyEnabled: Boolean(publicReply),
       publicReplyMessage: publicReply || null,
-      publicReplyMessages: publicReply ? [publicReply] : [],
+      publicReplyMessages: spec.respostasPublicas?.length
+        ? spec.respostasPublicas
+        : publicReply ? [publicReply] : [],
       publicReplyAfterDm: true,
       followUpEnabled: false,
       isActive: false,
