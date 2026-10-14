@@ -53,6 +53,7 @@ import {
   renderMessageWithoutLink,
 } from "@/lib/tracking/message";
 import { TRACKED_LINK_ORDER } from "@/lib/tracking/link-order";
+import { findIceBreaker, ICE_BREAKER_PREFIX } from "@/lib/icebreakers";
 import { hashRecipientId } from "@/lib/tracking/server";
 import {
   buildGateButtons,
@@ -1229,8 +1230,45 @@ async function runStrictGate({
  * The postback payload is `reveal:<automationId>`; the sender is the user's
  * IGSID (same id as their comment author id), which we DM directly.
  */
+/**
+ * Answer a tap on one of the account's ice breakers (config/icebreakers.json).
+ * The tap opened the conversation, so a normal DM is allowed. Deduped per tap
+ * through the same durable claim as other postbacks.
+ */
+async function processIceBreaker(job: Job<ProcessPostbackJob>): Promise<void> {
+  const { instagramAccountId, userId, payload } = job.data;
+  const account = await prisma.instagramAccount.findFirst({
+    where: {
+      instagramId: instagramAccountId,
+      ...(job.data.accountConnectionId ? { id: job.data.accountConnectionId } : {}),
+    },
+  });
+  if (!account || !hasInstagramCredentials(account)) return;
+  const item = findIceBreaker(account.username, payload);
+  if (!item) return;
+
+  const context = await createInstagramContext(account, `${job.id}:icebreaker`);
+  const operationId = createHash("sha256")
+    .update(JSON.stringify([account.id, "icebreaker", userId, job.data.mid ?? job.id ?? payload]))
+    .digest("hex");
+  await sendPostbackOnce({
+    operationId,
+    send: () =>
+      item.url && item.buttonLabel
+        ? sendButtonsMessage({
+            context,
+            instagramAccountId,
+            userId,
+            text: item.answer,
+            buttons: [{ type: "web_url", title: item.buttonLabel, url: item.url }],
+          })
+        : sendDirectMessage({ context, instagramAccountId, userId, message: item.answer }),
+  });
+}
+
 async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
   const { instagramAccountId, userId, payload, fallback } = job.data;
+  if (payload.startsWith(ICE_BREAKER_PREFIX)) return processIceBreaker(job);
 
   const isFollowCheck = payload.startsWith("followcheck:");
   if (!isFollowCheck && !payload.startsWith("reveal:")) return;

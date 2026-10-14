@@ -24,6 +24,14 @@ import {
 // immediately), so never cache it at the route or CDN layer.
 export const dynamic = "force-dynamic";
 
+// The delivery DM can carry the content itself (a text, not a link). It counts
+// as content once it is more than the default "here it is" line.
+const DEFAULT_DELIVERY_TEXT = "Tudo certo! Aqui está o conteúdo que você pediu.";
+function hasInlineContent(dmMessage: string | null | undefined): boolean {
+  const text = dmMessage?.trim() ?? "";
+  return text.length > 0 && text !== DEFAULT_DELIVERY_TEXT && !text.includes("{link}");
+}
+
 const createAutomationSchema = z
   .object({
     name: z.string().min(1).max(100),
@@ -91,8 +99,9 @@ const createAutomationSchema = z
   .refine(
     (d) =>
       !(d.isActive && d.requireFollow && d.followGateStrict) ||
-      Boolean(d.trackedDestinationUrl),
-    { message: "Cole a URL do conteúdo antes de ativar a campanha", path: ["trackedDestinationUrl"] }
+      Boolean(d.trackedDestinationUrl) ||
+      hasInlineContent(d.dmMessage),
+    { message: "Cole a URL do conteúdo (ou escreva o conteúdo na mensagem de entrega) antes de ativar a campanha", path: ["trackedDestinationUrl"] }
   )
   // An opening DM needs both a message and a button label.
   .refine(
@@ -579,10 +588,11 @@ export async function PATCH(request: NextRequest) {
       const links = await tx.trackedLink.count({ where: { automationId } });
       const hasTarget =
         Boolean(campaign.postId) || campaign.matchAnyPost || campaign.pendingNextReel;
-      if (links === 0 || !hasTarget) {
+      const hasContent = links > 0 || hasInlineContent(campaign.dmMessage);
+      if (!hasContent || !hasTarget) {
         throw new GoLiveBlocked(
-          links === 0
-            ? "Cole a URL do conteúdo antes de ativar a campanha"
+          !hasContent
+            ? "Cole a URL do conteúdo (ou escreva o conteúdo na mensagem de entrega) antes de ativar a campanha"
             : "Escolha o post ou Reel antes de ativar a campanha"
         );
       }

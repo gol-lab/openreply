@@ -1,0 +1,29 @@
+{
+  "_comment": "Perguntas prontas da DM (icebreakers) por conta. Máx. 4. Depois de editar, rode: npx tsx --env-file=.env scripts/publicar-icebreakers.ts",
+  "gollab.com.br": [
+    {
+      "key": "site",
+      "question": "O que tem no site do GOL LAB?",
+      "answer": "No gollab.com.br você vê como saiu cada gol dos times da elite do futebol brasileiro: origem dos gols feitos e sofridos de cada time, participação dos jogadores em gols, rankings, probabilidade, pontos esperados, o Gerador de Campinhos e muito mais! Tem dados de 2019 a 2026 e da Copa do Mundo de 2026. A temporada 2025 completa está liberada de graça até o fim desse ano!",
+      "buttonLabel": "Abrir o site",
+      "url": "https://gollab.com.br"
+    },
+    {
+      "key": "instagram",
+      "question": "O que você posta aqui no Instagram?",
+      "answer": "Aqui sai análise de futebol com dado: vídeos explicando lances e gols, vídeos em gráfico e 3D (mapa de chutes, pressão, rankings) e carrosséis com os números do esporte bretão ao redor do mundo."
+    },
+    {
+      "key": "youtube",
+      "question": "Como recebo acesso do YouTube do GOL LAB?",
+      "answer": "Pronto! Vou te enviar aqui o link do canal do João no YouTube, onde os debates e análises são exploradas com maior profundidade e dedicação.",
+      "buttonLabel": "Abrir o YouTube",
+      "url": "https://www.youtube.com/@gollabcombr"
+    },
+    {
+      "key": "contato",
+      "question": "Quero falar com o João",
+      "answer": "Pode mandar sua mensagem por aqui. Parceria, imprensa ou sugestão de pauta: o João lê e responde pessoalmente!"
+    }
+  ]
+}

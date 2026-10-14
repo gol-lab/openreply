@@ -44,6 +44,7 @@ COPY --from=build /app/.next ./.next
 COPY --from=build /app/app/generated ./app/generated
 COPY --from=build /app/public ./public
 COPY --from=build /app/lib ./lib
+COPY --from=build /app/config ./config
 COPY --from=build /app/worker ./worker
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/scripts ./scripts
