@@ -6,7 +6,9 @@
  *
  * Campos do arquivo (só nome, palavras e entrega são obrigatórios):
  *   nome, conta, palavras[], abertura, botaoAbertura, entrega,
- *   url, botaoEntrega, respostaPublica, exigirSeguir
+ *   url, botaoEntrega, url2, botaoEntrega2, respostaPublica, exigirSeguir,
+ *   qualquerPost (vale em todos os posts), tambemNaDM (também quando mandam
+ *   a palavra no direct)
  * Os textos da trava de seguidor seguem o padrão aprovado da ANALISE.
  * O post/Reel fica pendente: escolha no painel (Editar) antes de ativar.
  */
@@ -24,8 +26,12 @@ interface Spec {
   entrega: string;
   url?: string;
   botaoEntrega?: string;
+  url2?: string;
+  botaoEntrega2?: string;
   respostaPublica?: string | null;
   exigirSeguir?: boolean;
+  qualquerPost?: boolean;
+  tambemNaDM?: boolean;
 }
 
 async function main() {
@@ -63,12 +69,12 @@ async function main() {
       name: spec.nome,
       postId: null,
       postUrl: null,
-      matchAnyPost: false,
+      matchAnyPost: spec.qualquerPost === true,
       pendingNextReel: false,
       keywords: spec.palavras,
       matchAnyWord: false,
       wholeWordMatch: true,
-      dmTriggerEnabled: false,
+      dmTriggerEnabled: spec.tambemNaDM === true,
       openingDmEnabled: true,
       openingDmMessage:
         spec.abertura ?? "Vi que você comentou. Toque no botão abaixo que eu te mando o conteúdo.",
@@ -104,7 +110,19 @@ async function main() {
                   slug: generateTrackedLinkSlug(),
                   destinationUrl: spec.url,
                   label: spec.botaoEntrega ?? "Acessar conteúdo",
+                  position: 0,
                 },
+                ...(spec.url2
+                  ? [
+                      {
+                        workspaceId: account.workspaceId,
+                        slug: generateTrackedLinkSlug(),
+                        destinationUrl: spec.url2,
+                        label: spec.botaoEntrega2 ?? "Abrir link",
+                        position: 1,
+                      },
+                    ]
+                  : []),
               ],
             },
           }
@@ -113,7 +131,11 @@ async function main() {
     select: { id: true },
   });
   console.log(`Campanha criada PAUSADA: ${created.id}`);
-  console.log("Falta no painel: escolher o post/Reel (Editar) e ativar.");
+  console.log(
+    spec.qualquerPost
+      ? "Vale em qualquer post. Falta só ativar no painel."
+      : "Falta no painel: escolher o post/Reel (Editar) e ativar."
+  );
 }
 
 main()

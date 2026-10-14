@@ -1,0 +1,15 @@
+{
+  "nome": "PLANOS (fixa, qualquer post)",
+  "palavras": ["PLANOS", "PLANO"],
+  "qualquerPost": true,
+  "tambemNaDM": true,
+  "abertura": "Vi que você quer conhecer os planos do GOL LAB. Toque no botão abaixo que eu te mando tudo.",
+  "botaoAbertura": "Me envie os planos",
+  "entrega": "Estes são os planos do GOL LAB:\n\nCreator (R$ 29/mês): pra quem cria conteúdo. Gol a gol, Brasileirão + Copa, todos os insights e rankings.\n\nPro (R$ 149/mês): a base completa desde 2019, todos os filtros e cruzamentos, o banco gol a gol pesquisável e a exportação. Pra redações, clubes e apostadores.\n\nToque abaixo para ver os detalhes e assinar.",
+  "url": "https://gollab.com.br/#planos",
+  "botaoEntrega": "Ver os planos",
+  "url2": "https://wa.me/5511966935252?text=Ol%C3%A1!%20Vim%20pelo%20Instagram%20e%20quero%20conhecer%20os%20planos%20do%20GOL%20LAB.",
+  "botaoEntrega2": "Falar no WhatsApp",
+  "respostaPublica": "Te mandei os planos no direct.",
+  "exigirSeguir": true
+}
